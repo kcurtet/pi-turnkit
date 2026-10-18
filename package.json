@@ -1,0 +1,14 @@
+{
+	"name": "pi-turnkit",
+	"version": "0.1.0",
+	"description": "Turn-scoped modes for pi: prefix a prompt with + or _ to change model/thinking for that turn",
+	"keywords": ["pi-package"],
+	"license": "MIT",
+	"repository": "github:kcurtet/pi-turnkit",
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	}
+}
