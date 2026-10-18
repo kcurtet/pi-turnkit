@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Model, ModelRegistry, ThinkingLevel } from "@earendil-works/pi-coding-agent";
 
 const LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -144,6 +145,12 @@ function effectiveConfig(pi: ExtensionAPI, mode: Mode): ModeConfig {
 }
 
 export default function turnkitExtension(pi: ExtensionAPI) {
+	// Cache the registry for autocomplete (getArgumentCompletions has no ctx).
+	let registry: ModelRegistry | undefined;
+	pi.on("session_start", (_event, ctx) => {
+		registry = ctx.modelRegistry;
+	});
+
 	// Active mode for the current turn, with saved state to restore.
 	let activeTurn: { mode: Mode; previousLevel?: ThinkingLevel; previousModel?: Model<any> } | undefined;
 
@@ -277,15 +284,25 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(`Unknown mode "${parts[1]}" (marks: ${MODES.map((m) => m.mark).join(", ")})`, "error");
 					return;
 				}
-				// Accept "provider/model/level", "provider/model", "model".
-				const segments = parts[2].split("/").filter(Boolean);
-				let level: ThinkingLevel | undefined;
+			// Accept "provider/model/level", "provider/model", "model", "/level" (level only).
+			const spec = parts[2];
+			let level: ThinkingLevel | undefined;
+			let modelSpec: string | undefined;
+			if (spec.startsWith("/")) {
+				// "/level": keep the current model, change the level only.
+				level = spec.slice(1) as ThinkingLevel;
+				if (!LEVELS.includes(level)) {
+					ctx.ui.notify(`Invalid level "${level}". Use: ${LEVELS.join("|")}`, "error");
+					return;
+				}
+			} else {
+				const segments = spec.split("/").filter(Boolean);
 				if (segments.length >= 2 && LEVELS.includes(segments[segments.length - 1] as ThinkingLevel)) {
 					level = segments.pop() as ThinkingLevel;
 				}
-				const modelSpec = segments.join("/");
+				modelSpec = segments.join("/");
 				if (!modelSpec) {
-					ctx.ui.notify(`No model in "${parts[2]}"`, "error");
+					ctx.ui.notify(`No model in "${spec}"`, "error");
 					return;
 				}
 				const model = resolveModel(ctx.modelRegistry, modelSpec);
@@ -293,28 +310,90 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(`Model "${modelSpec}" not available`, "error");
 					return;
 				}
-				const config = loadConfig();
-				config[mode.mark] = {
-					...(config[mode.mark] ?? {}),
-					model: modelSpec,
-					...(level ? { level } : {}),
-				};
-				if (parts[3] && LEVELS.includes(parts[3] as ThinkingLevel)) {
-					config[mode.mark]!.level = parts[3] as ThinkingLevel;
-				}
-				saveConfig(config);
-				const effective = effectiveConfig(pi, mode);
-				ctx.ui.notify(
-					`turnkit ${mode.mark}: ${model.provider}/${model.id}${effective.level ? ` · thinking ${effective.level}` : ""}`,
-					"info",
-				);
-				return;
+			}
+			const config = loadConfig();
+			const entry: ModeConfig = { ...(config[mode.mark] ?? {}) };
+			if (modelSpec) entry.model = modelSpec;
+			if (level) entry.level = level;
+			if (parts[3] && LEVELS.includes(parts[3] as ThinkingLevel)) entry.level = parts[3] as ThinkingLevel;
+			config[mode.mark] = entry;
+			saveConfig(config);
+			const effective = effectiveConfig(pi, mode);
+			ctx.ui.notify(
+				`turnkit ${mode.mark}: ${effective.model ?? "session model"}${effective.level ? ` · thinking ${effective.level}` : ""}`,
+				"info",
+			);
+			return;
+		}
+
+		ctx.ui.notify(
+			"Usage: /turnkit [config <mark> <provider/model[/level]> | reset [mark]]",
+			"error",
+		);
+		},
+		getArgumentCompletions: (argumentPrefix: string): AutocompleteItem[] | null => {
+			const tokens = argumentPrefix.split(/\s+/);
+			// Which token is being completed: partial last token when the prefix
+			// doesn't end in a space, otherwise a fresh empty token.
+			const endsInSpace = /\s$/.test(argumentPrefix);
+			const position = endsInSpace ? tokens.length : tokens.length - 1;
+			const partial = endsInSpace ? "" : (tokens[tokens.length - 1] ?? "");
+			const matches = (value: string) => value.startsWith(partial);
+
+			// /turnkit <|config|reset...>
+			if (position === 0) {
+				const items: AutocompleteItem[] = [
+				{ value: "config ", label: "config", description: "set <mark> <provider/model[/level]>" },
+				{ value: "reset ", label: "reset", description: "clear persisted config [mark]" },
+			].filter((item) => item.value.startsWith(partial));
+			return items.length > 0 ? items : null;
 			}
 
-			ctx.ui.notify(
-				"Usage: /turnkit [config <mark> <provider/model[/level]> | reset [mark]]",
-				"error",
-			);
+			const subcommand = tokens[0];
+			// /turnkit config <+|_>
+			if (subcommand === "config" && position === 1) {
+				const items = MODES.map((mode) => ({
+					value: `${mode.mark} `,
+					label: `${mode.mark} (${mode.name})`,
+					description: mode.description,
+				})).filter((item) => matches(item.value));
+				return items.length > 0 ? items : null;
+			}
+
+			// /turnkit config + <provider/model[/level]>
+			if (subcommand === "config" && position === 2 && registry) {
+				const items: AutocompleteItem[] = registry
+					.getAvailable()
+					.filter((m) => m.type === undefined || m.type === "chat")
+					.map((m) => ({
+						value: `${m.provider}/${m.id}`,
+					label: m.id,
+						description: m.provider,
+					}))
+					.filter((item) => item.value.includes(partial));
+				return items.length > 0 ? items : null;
+			}
+
+			// /turnkit config + provider/model <level>  (explicit 4th arg)
+			if (subcommand === "config" && position === 3) {
+				const items = LEVELS.map((level) => ({
+					value: level,
+					label: level,
+				})).filter((item) => matches(item.value));
+				return items.length > 0 ? items : null;
+			}
+
+			// /turnkit reset <+|_>
+			if (subcommand === "reset" && position === 1) {
+				const items = MODES.map((mode) => ({
+					value: mode.mark,
+					label: `${mode.mark} (${mode.name})`,
+					description: `clear ${mode.name}`,
+				})).filter((item) => matches(item.value));
+				return items.length > 0 ? items : null;
+			}
+
+			return null;
 		},
 	});
 }
