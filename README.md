@@ -7,6 +7,7 @@ it; everything is restored when the turn ends.
 ```text
 ❯ +plan the refactor of the parser   (think hard)
 ❯ _summarize the last commit         (cheap model)
+❯ =qué hay en esta imagen ~/foto.png  (vision model)
 ```
 
 ## Modes
@@ -15,6 +16,7 @@ it; everything is restored when the turn ends.
 |---|---|---|
 | `+` | think | thinking `max`, session model |
 | `_` | cheap | `glm-5.3-flash` |
+| `=` | vision | `zai/glm-5.3-flash` |
 
 ## Configuration
 
@@ -28,13 +30,15 @@ Persisted in `$PI_HOME/extensions-config/turnkit.json`, first match wins:
 /turnkit                                    show config for every mode
 /turnkit config + zai/glm-5.3 xhigh        think on glm-5.3 at xhigh
 /turnkit config _ ollama/gemma4:latest     cheap on local gemma
+/turnkit config = ollama/gemma4:latest        vision on local gemma
 /turnkit config + high                      keep model, thinking high
 /turnkit reset +                           clear one mode
 /turnkit reset                             clear all
 ```
 
 Flags and env vars: `--think-model` / `PI_THINK_MODEL`,
-`--think-level` / `PI_THINK_LEVEL`, `--cheap-model` / `PI_USE_CHEAP_MODEL`.
+`--think-level` / `PI_THINK_LEVEL`, `--cheap-model` / `PI_USE_CHEAP_MODEL`,
+`--vision-model` / `PI_VISION_MODEL`.
 
 ## Details
 
