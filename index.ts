@@ -76,6 +76,15 @@ const MODES: Mode[] = [
 		envVar: "PI_USE_CHEAP_MODEL",
 		warnMidTurn: true,
 	},
+	{
+		mark: "=",
+		name: "vision",
+		description: "a vision-capable model, default zai/glm-5.3-flash",
+		defaults: { model: "zai/glm-5.3-flash" },
+		flagName: "vision-model",
+		envVar: "PI_VISION_MODEL",
+		warnMidTurn: true,
+	},
 ];
 
 // `__init__.py fails` and a lone mark are not marked input.
