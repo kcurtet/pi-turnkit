@@ -35,6 +35,17 @@ import type { ExtensionAPI, ExtensionUIContext as ExtensionUIContextLike, Model,
 
 const LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+const PLAN_MARK = "?";
+const PLAN_GUIDELINE = [
+	"PLAN MODE: this turn is read-only planning.",
+	"Analyze the request and produce a concrete plan: what to change, in which files, in what order, risks and alternatives.",
+	"Do NOT create, modify, or delete anything. Mutating tools (write/edit/bash and non-read-only MCP tools) are blocked this turn.",
+	"Use read-only tools freely (read, grep, find, ls, diagnostics).",
+	"End your answer with the plan, ready to execute on request.",
+].join(" ");
+// Builtin tools allowed in plan mode (read-only).
+const PLAN_ALLOWED_BUILTIN = new Set(["read", "grep", "find", "ls", "glob", "codemode", "web_search", "fetch_content", "get_search_content", "source_check", "symbol_search", "project_report", "module_report", "read_symbol", "read_enclosing", "lens_diagnostics", "memory_read", "memory_search", "memory_status"]);
+
 interface ModeConfig {
 	model?: string; // "provider/model-id" or "model-id"
 	level?: ThinkingLevel;
@@ -240,9 +251,22 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 
 	// Active mode for the current turn, with saved state to restore.
 	let activeTurn: { mode: Mode; previousLevel?: ThinkingLevel; previousModel?: Model<any> } | undefined;
+	// "?" plan mode: read-only turn (prompt guideline + hard tool blocking).
+	let planTurn = false;
 
 	pi.on("input", async (event, ctx) => {
 		if (event.source !== "interactive" && event.source !== "extension") return;
+
+		if (isMarked(event.text, PLAN_MARK)) {
+			const text = event.text.slice(PLAN_MARK.length).trimStart();
+			if (!text) return; // lone "?": don't hijack the input
+			if (event.streamingBehavior !== undefined) {
+				ctx.ui.notify("Sent mid-turn: plan mode needs an idle turn", "warning");
+				return { action: "transform" as const, text };
+			}
+			planTurn = true;
+			return { action: "transform" as const, text };
+		}
 
 		for (const mode of MODES) {
 			if (!isMarked(event.text, mode.mark)) continue;
@@ -274,6 +298,27 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 		}
 	});
 
+	pi.on("before_agent_start", async (event) => {
+		if (planTurn) {
+			event.systemPromptOptions.promptGuidelines.push(PLAN_GUIDELINE);
+		}
+	});
+
+	// Hard enforcement: block mutating tools during a plan turn.
+	pi.on("tool_call", async (event, ctx) => {
+		if (!planTurn) return;
+		const name = ("toolName" in event ? event.toolName : "") as string;
+		if (!name) return;
+		if (PLAN_ALLOWED_BUILTIN.has(name)) return;
+		const info = pi.getAllTools().find((tool) => tool.name === name);
+		if (info?.annotations?.readOnlyHint === true) return;
+		if (ctx.hasUI) ctx.ui.notify(`plan mode: blocked ${name}`, "warning");
+		return {
+			block: true as const,
+			reason: `Plan mode (turn started with "${PLAN_MARK}") is read-only: ${name} is not allowed this turn. Produce the plan instead.`,
+		};
+	});
+
 	pi.on("agent_start", async (_event, ctx) => {
 		if (!activeTurn) return;
 		const config = effectiveConfig(pi, activeTurn.mode);
@@ -295,6 +340,7 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
+		planTurn = false;
 		if (!activeTurn) return;
 		const { mode, previousLevel, previousModel } = activeTurn;
 		const config = effectiveConfig(pi, mode);
@@ -337,13 +383,16 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 			if (parts.length === 0) {
 				// Help + current config in one block.
 				const persisted = loadConfig();
-				const modeLines = MODES.map((mode) => {
-					const config = effectiveConfig(pi, mode);
-					const src = persisted[mode.mark] ? "persisted" : "default";
-					const bits = [config.model ?? "session model"];
-					if (config.level) bits.push(`thinking ${config.level}`);
-					return `  ${mode.mark} ${mode.name.padEnd(7)} ${bits.join(" · ")} (${src})`;
-				});
+				const modeLines = [
+					...MODES.map((mode) => {
+						const config = effectiveConfig(pi, mode);
+						const src = persisted[mode.mark] ? "persisted" : "default";
+						const bits = [config.model ?? "session model"];
+						if (config.level) bits.push(`thinking ${config.level}`);
+						return `  ${mode.mark} ${mode.name.padEnd(7)} ${bits.join(" · ")} (${src})`;
+					}),
+					`  ${PLAN_MARK} plan    read-only planning turn (no config)`,
+				];
 				ctx.ui.notify(
 					[
 						"turnkit — prefix a prompt with a mark to change that turn:",
