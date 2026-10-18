@@ -335,15 +335,28 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 
 			if (parts.length === 0) {
-				for (const mode of MODES) {
+				// Help + current config in one block.
+				const persisted = loadConfig();
+				const modeLines = MODES.map((mode) => {
 					const config = effectiveConfig(pi, mode);
-					const persisted = loadConfig()[mode.mark];
-					const src = persisted ? "persisted" : "defaults/flags";
-					ctx.ui.notify(
-						`${mode.mark} ${mode.name}: ${config.model ?? "session model"}${config.level ? ` · thinking ${config.level}` : ""} (${src})`,
-						"info",
-					);
-				}
+					const src = persisted[mode.mark] ? "persisted" : "default";
+					const bits = [config.model ?? "session model"];
+					if (config.level) bits.push(`thinking ${config.level}`);
+					return `  ${mode.mark} ${mode.name.padEnd(7)} ${bits.join(" · ")} (${src})`;
+				});
+				ctx.ui.notify(
+					[
+						"turnkit — prefix a prompt with a mark to change that turn:",
+						...modeLines,
+						"",
+						"Commands:",
+						"  /turnkit config                       interactive wizard",
+						"  /turnkit config <mark> <model> [lvl]  e.g. /turnkit config + zai/glm-5.3 xhigh",
+						"  /turnkit config <mark> <lvl>          level only, e.g. /turnkit config + high",
+						"  /turnkit reset [mark]                 clear persisted config",
+					].join("\n"),
+					"info",
+				);
 				return;
 			}
 
