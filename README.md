@@ -8,6 +8,7 @@ it; everything is restored when the turn ends.
 ❯ +plan the refactor of the parser   (think hard)
 ❯ _summarize the last commit         (cheap model)
 ❯ =qué hay en esta imagen ~/foto.png  (vision model)
+❯ ?plan the migration off the parser    (read-only plan mode)
 ```
 
 ## Modes
@@ -17,6 +18,7 @@ it; everything is restored when the turn ends.
 | `+` | think | thinking `max`, session model |
 | `_` | cheap | `glm-5.3-flash` |
 | `=` | vision | `zai/glm-5.3-flash` |
+| `?` | plan | read-only planning turn (no config) |
 
 ## Configuration
 
@@ -43,6 +45,9 @@ Flags and env vars: `--think-model` / `PI_THINK_MODEL`,
 ## Details
 
 - `__init__.py fails` (double mark) and a lone mark are not treated as marked.
+- `?` plan turns inject a read-only guideline into the system prompt and hard-block
+  mutating tools (`write`, `edit`, `bash`, non-read-only MCP tools) via the
+  `tool_call` event.
 - Mid-turn prompts keep the running turn's config (`_` warns).
 - Thinking levels are clamped by pi to what the model supports.
 
