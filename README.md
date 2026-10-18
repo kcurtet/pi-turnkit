@@ -20,15 +20,15 @@ it; everything is restored when the turn ends.
 
 Persisted in `$PI_HOME/extensions-config/turnkit.json`, first match wins:
 
-1. `/turnkit config <mark> <provider/model[/level]>` (persisted)
+1. `/turnkit config <mark> <provider/model> [level]` (persisted)
 2. CLI flags / env vars per mode
 3. Built-in defaults
 
 ```text
 /turnkit                                    show config for every mode
-/turnkit config + zai/glm-5.3/xhigh        think on glm-5.3 at xhigh
+/turnkit config + zai/glm-5.3 xhigh        think on glm-5.3 at xhigh
 /turnkit config _ ollama/gemma4:latest     cheap on local gemma
-/turnkit config + /high                    keep model, thinking high
+/turnkit config + high                      keep model, thinking high
 /turnkit reset +                           clear one mode
 /turnkit reset                             clear all
 ```
