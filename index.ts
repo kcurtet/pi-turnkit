@@ -31,7 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import type { ExtensionAPI, Model, ModelRegistry, ThinkingLevel } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext as ExtensionUIContextLike, Model, ModelRegistry, ThinkingLevel } from "@earendil-works/pi-coding-agent";
 
 const LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -151,6 +151,84 @@ function effectiveConfig(pi: ExtensionAPI, mode: Mode): ModeConfig {
 		}
 	}
 	return result;
+}
+
+/** Interactive /turnkit config wizard (TUI). Loops until the user exits. */
+async function configWizard(
+	pi: ExtensionAPI,
+	ctx: { ui: ExtensionUIContextLike; modelRegistry: ModelRegistry; hasUI: boolean },
+) {
+	const choices = MODES.map((mode) => {
+		const config = effectiveConfig(pi, mode);
+		const bits: string[] = [];
+		bits.push(config.model ?? "session model");
+		if (config.level) bits.push(`thinking ${config.level}`);
+		return `${mode.mark} ${mode.name}: ${bits.join(" · ")}`;
+	});
+
+	while (true) {
+		const choice = await ctx.ui.select(
+			"turnkit — pick a mode to configure",
+			[...choices, "Done"],
+		);
+		if (choice === undefined || choice === "Done") return;
+		const mode = MODES[choices.indexOf(choice)];
+		if (!mode) return;
+
+		const action = await ctx.ui.select(
+			`turnkit ${mode.mark} (${mode.name})`,
+			["Set model", "Set model + thinking level", "Set thinking level only", "Reset this mode", "Back"],
+		);
+		if (action === undefined || action === "Back") continue;
+
+		if (action === "Reset this mode") {
+			const config = loadConfig();
+			delete config[mode.mark];
+			saveConfig(config);
+			ctx.ui.notify(`turnkit: ${mode.mark} config cleared`, "info");
+			continue;
+		}
+
+		let modelSpec: string | undefined;
+		if (action.startsWith("Set model")) {
+			const models = ctx.modelRegistry
+				.getAvailable()
+				.filter((m) => m.type === undefined || m.type === "chat")
+				.map((m) => `${m.provider}/${m.id}`)
+				.sort();
+			models.unshift("(keep current model)");
+			const picked = await ctx.ui.select(
+				`turnkit ${mode.mark} — model`,
+				[...models, "Cancel"],
+			);
+			if (picked === undefined || picked === "Cancel") continue;
+			if (picked !== "(keep current model)") modelSpec = picked;
+		}
+
+		let level: ThinkingLevel | undefined;
+		if (action !== "Set model") {
+			const picked = await ctx.ui.select(
+				`turnkit ${mode.mark} — thinking level`,
+				[...LEVELS, "(keep current level)", "Cancel"],
+			);
+			if (picked === undefined || picked === "Cancel" || picked === "(keep current level)") continue;
+			level = picked as ThinkingLevel;
+		}
+
+		const config = loadConfig();
+		const entry: ModeConfig = { ...(config[mode.mark] ?? {}) };
+		if (modelSpec) entry.model = modelSpec;
+		if (level) entry.level = level;
+		config[mode.mark] = entry;
+		saveConfig(config);
+		const effective = effectiveConfig(pi, mode);
+		ctx.ui.notify(
+			`turnkit ${mode.mark}: ${effective.model ?? "session model"}${effective.level ? ` · thinking ${effective.level}` : ""}`,
+			"info",
+		);
+		// Refresh labels for the next loop iteration.
+		choices[MODES.indexOf(mode)] = `${mode.mark} ${mode.name}: ${[effective.model ?? "session model", effective.level ? `thinking ${effective.level}` : ""].filter(Boolean).join(" · ")}`;
+	}
 }
 
 export default function turnkitExtension(pi: ExtensionAPI) {
@@ -284,6 +362,16 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 					saveConfig({});
 					ctx.ui.notify("turnkit: all persisted config cleared", "info");
 				}
+				return;
+			}
+
+			if (parts[0] === "config" && parts.length === 1) {
+				// Interactive wizard (TUI/RPC); fall back to usage in headless mode.
+				if (!ctx.hasUI) {
+					ctx.ui.notify("Usage: /turnkit config <mark> <provider/model> [level]", "error");
+					return;
+				}
+				await configWizard(pi, ctx);
 				return;
 			}
 
