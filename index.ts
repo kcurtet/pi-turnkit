@@ -243,7 +243,7 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("turnkit", {
-		description: "Turn-scoped modes: /turnkit [config <mark> <provider/model[/level]> | reset [mark]]",
+		description: "Turn-scoped modes: /turnkit [config <mark> <provider/model> [level] | reset [mark]]",
 		handler: async (args, ctx) => {
 			const parts = args.trim().split(/\s+/).filter(Boolean);
 
@@ -284,38 +284,37 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 					ctx.ui.notify(`Unknown mode "${parts[1]}" (marks: ${MODES.map((m) => m.mark).join(", ")})`, "error");
 					return;
 				}
-			// Accept "provider/model/level", "provider/model", "model", "/level" (level only).
-			const spec = parts[2];
+			// Syntax: config <mark> <provider/model> [level] | config <mark> <level> | config <mark> /<level>
+			const spec = parts[2] as string;
 			let level: ThinkingLevel | undefined;
 			let modelSpec: string | undefined;
-			if (spec.startsWith("/")) {
-				// "/level": keep the current model, change the level only.
-				level = spec.slice(1) as ThinkingLevel;
+			if (spec.startsWith("/") || LEVELS.includes(spec as ThinkingLevel)) {
+				// "/level" or bare "level": keep the current model, change the level only.
+				level = (spec.startsWith("/") ? spec.slice(1) : spec) as ThinkingLevel;
 				if (!LEVELS.includes(level)) {
 					ctx.ui.notify(`Invalid level "${level}". Use: ${LEVELS.join("|")}`, "error");
 					return;
 				}
 			} else {
-				const segments = spec.split("/").filter(Boolean);
-				if (segments.length >= 2 && LEVELS.includes(segments[segments.length - 1] as ThinkingLevel)) {
-					level = segments.pop() as ThinkingLevel;
-				}
-				modelSpec = segments.join("/");
-				if (!modelSpec) {
-					ctx.ui.notify(`No model in "${spec}"`, "error");
-					return;
-				}
+				modelSpec = spec;
 				const model = resolveModel(ctx.modelRegistry, modelSpec);
 				if (!model || !ctx.modelRegistry.hasConfiguredAuth(model)) {
 					ctx.ui.notify(`Model "${modelSpec}" not available`, "error");
 					return;
+				}
+				// Optional 4th arg: the thinking level.
+				if (parts[3]) {
+					if (!LEVELS.includes(parts[3] as ThinkingLevel)) {
+						ctx.ui.notify(`Invalid level "${parts[3]}". Use: ${LEVELS.join("|")}`, "error");
+						return;
+					}
+					level = parts[3] as ThinkingLevel;
 				}
 			}
 			const config = loadConfig();
 			const entry: ModeConfig = { ...(config[mode.mark] ?? {}) };
 			if (modelSpec) entry.model = modelSpec;
 			if (level) entry.level = level;
-			if (parts[3] && LEVELS.includes(parts[3] as ThinkingLevel)) entry.level = parts[3] as ThinkingLevel;
 			config[mode.mark] = entry;
 			saveConfig(config);
 			const effective = effectiveConfig(pi, mode);
@@ -327,7 +326,7 @@ export default function turnkitExtension(pi: ExtensionAPI) {
 		}
 
 		ctx.ui.notify(
-			"Usage: /turnkit [config <mark> <provider/model[/level]> | reset [mark]]",
+			"Usage: /turnkit [config <mark> <provider/model> [level] | config <mark> <level> | reset [mark]]",
 			"error",
 		);
 		},
